@@ -143,29 +143,90 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ------------------------------
 # 🚀 AI обработка
 # ------------------------------
+# -----------------------------------------
+# 🔹 ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ
+# Разбивает длинный текст (лимит Telegram ~4096)
+# -----------------------------------------
+async def send_long_message(message, text: str):
+    MAX_LENGTH = 4000  # безопасный лимит
+
+    for i in range(0, len(text), MAX_LENGTH):
+        chunk = text[i:i + MAX_LENGTH]
+        await message.reply_text(chunk)
+
+
+# -----------------------------------------
+# 🔹 ОСНОВНАЯ ФУНКЦИЯ AI
+# -----------------------------------------
 async def process_ai(message, context):
     try:
         data = context.user_data
 
-        logger.info(f"PROCESS AI: {data}")
+        logger.info(f"[PROCESS AI] DATA: {data}")
 
+        # ---------------------------------
+        # 🔹 СОЗДАЕМ ЗАПРОС (ВАЖНО: все поля)
+        # ---------------------------------
         request = TransformRequest(
-            text=data["text"],
-            goal=data["goal"],
-            audience=data["audience"],
-            tone=data["tone"],
+            text=data.get("text"),
+            goal=data.get("goal"),
+            audience=data.get("audience"),
+            tone=data.get("tone"),
+            formality=data.get("formality"),
+            length=data.get("length"),
+            simplify=data.get("simplify"),  # 🔥 фикс твоей ошибки
         )
 
+        # ---------------------------------
+        # 🔹 ИНИЦИАЛИЗАЦИЯ AI
+        # ---------------------------------
         prompt_builder = PromptBuilder()
         llm_client = LLMClient()
         engine = AIEngine(prompt_builder, llm_client)
 
+        # ---------------------------------
+        # 🔹 ВЫЗОВ AI
+        # ---------------------------------
         response = engine.transform(request)
 
-        await message.reply_text(response.adapted_text)
+        # ---------------------------------
+        # 🔹 ФОРМИРУЕМ ОТВЕТ
+        # ---------------------------------
+        result_text = f"""
+🔹 Адаптированный текст:
 
+{response.adapted_text}
+
+🔹 Нейтральная версия:
+
+{response.neutral_text}
+
+🔹 Оригинал:
+
+{data.get("text")}
+
+🔹 Объяснение:
+
+{response.explanation}
+""".strip()
+
+        # ---------------------------------
+        # 🔹 ОТПРАВКА (с защитой длины)
+        # ---------------------------------
+        await send_long_message(message, result_text)
+
+        logger.info("[PROCESS AI] SUCCESS")
+
+        # очищаем состояние
         context.user_data.clear()
 
     except Exception as e:
-        logger.error(f"AI ERROR: {e}")
+        print("\n🔥 AI ERROR:", e, "\n")
+
+        import traceback
+        traceback.print_exc()
+
+        logger.error(f"[PROCESS AI ERROR] {e}")
+
+        # ❗ только ОДИН ответ
         await message.reply_text(TEXT_ERROR)
