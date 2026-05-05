@@ -1,13 +1,12 @@
-# Обработчик текста пользователя
+# -------------------------------------------------
+# 📩 ОБРАБОТЧИК ТЕКСТА (WIZARD)
+# -------------------------------------------------
 # Этот файл отвечает за:
-# - получение текста от пользователя
-# - проверку сценария (выбрана ли цель)
-# - вызов AI-движка
-# - отправку результата обратно в Telegram
-
-# Wizard-обработчик (пошаговый ввод данных)
-
-# Обработчик текста пользователя (wizard + защита от мусора)
+# - пошаговый ввод данных (text → goal → audience → tone → ...)
+# - защиту от мусора (пустые сообщения, не текст)
+# - запуск AI
+# - отправку результата
+# -------------------------------------------------
 
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -15,8 +14,6 @@ from telegram.ext import ContextTypes
 import logging
 
 from app.config.texts import (
-    TEXT_NEED_MODE,
-    TEXT_TOO_SHORT,
     TEXT_ERROR,
     TEXT_STEP_GOAL,
     TEXT_STEP_AUDIENCE,
@@ -33,31 +30,31 @@ from app.core.prompt_builder import PromptBuilder
 from app.services.llm_client import LLMClient
 from app.core.ai_engine import AIEngine
 
-
 logger = logging.getLogger(__name__)
 
 
+# -------------------------------------------------
+# 🧠 ОСНОВНОЙ ОБРАБОТЧИК ТЕКСТА
+# -------------------------------------------------
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info(f"[HANDLE_TEXT] RAW UPDATE: {update}")
-    # ------------------------------
-    # 🔥 защита от НЕ текста
-    # ------------------------------
+
+    logger.info(f"[HANDLE_TEXT] UPDATE: {update}")
+
+    # 🔹 защита от НЕ текста
     if not update.message or not update.message.text:
         await update.message.reply_text("Пожалуйста, отправь текст 🙂")
         return
 
     user_text = update.message.text.strip()
 
-    # ------------------------------
-    # 🔥 защита от пустого текста
-    # ------------------------------
+    # 🔹 защита от пустого текста
     if not user_text:
         await update.message.reply_text("Текст пустой 🙂")
         return
 
     step = context.user_data.get("step")
 
-    logger.info(f"STEP: {step} | TEXT: {user_text}")
+    logger.info(f"[HANDLE_TEXT] STEP: {step} | TEXT: {user_text}")
 
     # ------------------------------
     # 🔹 ШАГ 1 — текст
@@ -68,8 +65,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text(TEXT_STEP_GOAL)
         return
-        logger.info(f"[HANDLE_TEXT] TEXT: {user_text}")
-        logger.info(f"[HANDLE_TEXT] STEP: {step}")
 
     # ------------------------------
     # 🔹 ШАГ 2 — цель
@@ -140,33 +135,29 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-# ------------------------------
-# 🚀 AI обработка
-# ------------------------------
-# -----------------------------------------
-# 🔹 ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ
-# Разбивает длинный текст (лимит Telegram ~4096)
-# -----------------------------------------
+# -------------------------------------------------
+# 🔧 РАЗБИВКА ДЛИННЫХ СООБЩЕНИЙ
+# -------------------------------------------------
 async def send_long_message(message, text: str):
-    MAX_LENGTH = 4000  # безопасный лимит
+    MAX_LENGTH = 4000
 
     for i in range(0, len(text), MAX_LENGTH):
-        chunk = text[i:i + MAX_LENGTH]
-        await message.reply_text(chunk)
+        await message.reply_text(text[i:i + MAX_LENGTH])
 
 
-# -----------------------------------------
-# 🔹 ОСНОВНАЯ ФУНКЦИЯ AI
-# -----------------------------------------
+# -------------------------------------------------
+# 🚀 AI ОБРАБОТКА
+# -------------------------------------------------
 async def process_ai(message, context):
+
+    # 🔥 статус "думаю"
+    processing_msg = await message.reply_text("⏳ Обрабатываю текст...")
+
     try:
         data = context.user_data
-
         logger.info(f"[PROCESS AI] DATA: {data}")
 
-        # ---------------------------------
-        # 🔹 СОЗДАЕМ ЗАПРОС (ВАЖНО: все поля)
-        # ---------------------------------
+        # 🔹 создаем запрос
         request = TransformRequest(
             text=data.get("text"),
             goal=data.get("goal"),
@@ -174,50 +165,42 @@ async def process_ai(message, context):
             tone=data.get("tone"),
             formality=data.get("formality"),
             length=data.get("length"),
-            simplify=data.get("simplify"),  # 🔥 фикс твоей ошибки
+            simplify=data.get("simplify"),
         )
 
-        # ---------------------------------
-        # 🔹 ИНИЦИАЛИЗАЦИЯ AI
-        # ---------------------------------
-        prompt_builder = PromptBuilder()
-        llm_client = LLMClient()
-        engine = AIEngine(prompt_builder, llm_client)
-
-        # ---------------------------------
-        # 🔹 ВЫЗОВ AI
-        # ---------------------------------
+        # 🔹 AI
+        engine = AIEngine(PromptBuilder(), LLMClient())
         response = engine.transform(request)
 
-        # ---------------------------------
-        # 🔹 ФОРМИРУЕМ ОТВЕТ
-        # ---------------------------------
-        result_text = f"""
-🔹 Адаптированный текст:
+        # 🔥 меняем статус
+        await processing_msg.edit_text("✅ Готово! Вот результат 👇")
 
-{response.adapted_text}
+        # ------------------------------
+        # 🔹 ОТПРАВКА ПО БЛОКАМ (ВАЖНО)
+        # ------------------------------
+        await send_long_message(
+            message,
+            f"🔹 Адаптированный текст:\n\n{response.adapted_text}"
+        )
 
-🔹 Нейтральная версия:
+        await send_long_message(
+            message,
+            f"🔹 Нейтральная версия:\n\n{response.neutral_text}"
+        )
 
-{response.neutral_text}
+        await send_long_message(
+            message,
+            f"🔹 Оригинал:\n\n{data.get('text')}"
+        )
 
-🔹 Оригинал:
-
-{data.get("text")}
-
-🔹 Объяснение:
-
-{response.explanation}
-""".strip()
-
-        # ---------------------------------
-        # 🔹 ОТПРАВКА (с защитой длины)
-        # ---------------------------------
-        await send_long_message(message, result_text)
+        await send_long_message(
+            message,
+            f"🔹 Объяснение:\n\n{response.explanation}"
+        )
 
         logger.info("[PROCESS AI] SUCCESS")
 
-        # очищаем состояние
+        # 🔹 очищаем состояние
         context.user_data.clear()
 
     except Exception as e:
@@ -228,5 +211,6 @@ async def process_ai(message, context):
 
         logger.error(f"[PROCESS AI ERROR] {e}")
 
-        # ❗ только ОДИН ответ
+        await processing_msg.edit_text("❌ Ошибка обработки")
+
         await message.reply_text(TEXT_ERROR)
