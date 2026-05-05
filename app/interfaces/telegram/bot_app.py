@@ -9,7 +9,14 @@ from app.interfaces.telegram.handlers.transform import handle_text
 from app.interfaces.telegram.handlers.common import handle_buttons
 
 
-logging.basicConfig(level=logging.INFO)
+import logging
+
+logging.basicConfig(
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    level=logging.INFO
+)
+
+logger = logging.getLogger(__name__)
 logger = logging.getLogger(__name__)
 
 
