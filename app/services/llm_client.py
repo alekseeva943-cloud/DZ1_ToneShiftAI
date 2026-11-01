@@ -14,7 +14,8 @@ class LLMClient:
 
     def generate(self, prompt: str) -> str:
         response = self.client.chat.completions.create(
-            model="gpt-4.1-mini",
+            model="gpt-6-luna",
+            reasoning_effort="none",
             messages=[
                 {"role": "user", "content": prompt}
             ],
